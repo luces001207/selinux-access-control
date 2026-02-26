@@ -22,6 +22,17 @@ user:role:type:level
 
 The **type** field is the most critical component in the targeted policy. SELinux's type enforcement rules define which process types (domains) can access which file types. For example, the `httpd_t` domain can read `httpd_sys_content_t` files but cannot read `user_home_t` files — regardless of Unix permissions.
 
+```mermaid
+flowchart TD
+    A["Process Request\n(e.g., Apache reads index.html)"] --> B{"DAC Check\n(Unix Permissions)"}
+    B -->|"Denied"| C["❌ Access Denied\n(Permission Error)"]
+    B -->|"Allowed"| D{"SELinux MAC Check\n(Type Enforcement)"}
+    D -->|"Source type allowed\nto access target type?"| E{"Policy Lookup"}
+    E -->|"httpd_t → httpd_sys_content_t ✅"| F["✅ Access Granted"]
+    E -->|"httpd_t → user_home_t ❌"| G["❌ Access Denied\n(403 Forbidden)\nAVC Denial Logged"]
+    D -->|"SELinux Disabled\nor Permissive"| H["⚠️ Access Allowed\n(Logged if Permissive)"]
+```
+
 ---
 
 ## Task 1: Changing the httpd Port Policy
@@ -129,6 +140,25 @@ type=AVC msg=audit(...): avc: denied { read } for pid=960
   tcontext=unconfined_u:object_r:user_home_t:s0  ← Wrong file type
 ```
 
+```mermaid
+flowchart LR
+    subgraph HOME ["/home/en1/"]
+        A["index.html\n🏷️ user_home_t"]
+    end
+    subgraph MV ["mv (rename) → /var/www/html/"]
+        B["index.html\n🏷️ user_home_t\n❌ Apache BLOCKED"]
+    end
+    subgraph CP ["cp (new file) → /var/www/html/"]
+        C["index.html\n🏷️ httpd_sys_content_t\n✅ Apache ALLOWED"]
+    end
+    subgraph FIX ["restorecon → /var/www/html/"]
+        D["index.html\n🏷️ httpd_sys_content_t\n✅ Apache ALLOWED"]
+    end
+    A -->|"mv\n(preserves context)"| B
+    A -->|"cp\n(inherits destination)"| C
+    B -->|"restorecon -v\n(relabels per policy)"| D
+```
+
 ### The Fix
 
 ```bash
@@ -178,6 +208,21 @@ cy5130_u:webadm_r:webadm_t:s0
 ```
 
 The SELinux user (`cy5130_u`) remains constant — only the **role** and **type** change. This follows the principle of least privilege: `en2` gains web administration capabilities without obtaining unconfined root access.
+
+```mermaid
+flowchart TD
+    subgraph LOGIN ["SSH Login as en2"]
+        A["cy5130_u : staff_r : staff_t : s0\n👤 General-purpose confined user"]
+    end
+    subgraph SUDO ["sudo /bin/sh"]
+        B["Sudoers Rule:\nTYPE=webadm_t ROLE=webadm_r /bin/sh"]
+    end
+    subgraph TRANSITION ["New Shell Context"]
+        C["cy5130_u : webadm_r : webadm_t : s0\n🔧 Web administration domain"]
+    end
+    A -->|"sudo /bin/sh"| B
+    B -->|"Role + Type transition"| C
+```
 
 ---
 
